@@ -1,5 +1,5 @@
 // dehumidifier controller
-// turn off power to the dehumidifier during peak rate period.
+// uses an ssr to turn off power to the dehumidifier during peak rate period.
 // J.Christensen 06Jun2023
 
 #include <JC_Button.h>      // https://github.com/JChristensen/JC_Button
@@ -13,9 +13,10 @@
 // pin definitions
 constexpr uint8_t
     rtcInterrupt {2},
-    led1 {6},               // timer output
-    led2 {7},               // rfu
-    btn1 {8};               // rfu
+    ledIndicator {6},       // indicator, same as ssr control output
+    ledHB {7},              // heartbeat led
+    btn1 {8},               // override/manual button (not yet implemented)
+    ssr {9};                // output to ssr control
 
 void timerCallback(bool state);
 
@@ -26,6 +27,8 @@ Timer timer(sched, sizeof(sched) / sizeof(sched[0]), timerCallback);
 // object instantiations
 MCP79412RTC myRTC;
 Button override(btn1);
+const uint32_t hbInterval(1000);
+HeartbeatLED hb(ledHB, hbInterval);
 
 // time zone
 TimeChangeRule EDT {"EDT", Second, Sun, Mar, 2, -240};  // Daylight time = UTC - 4 hours
@@ -38,19 +41,19 @@ void setup()
     Serial.begin(115200);
     Serial << F( "\n" __FILE__ "\nCompiled " __DATE__ " " __TIME__ "\n" );
     pinMode(rtcInterrupt, INPUT_PULLUP);
-    pinMode(led1, OUTPUT);
-    pinMode(led2, OUTPUT);
+    pinMode(ledIndicator, OUTPUT);
+    pinMode(ssr, OUTPUT);
     override.begin();
     attachInterrupt(digitalPinToInterrupt(rtcInterrupt), incrementTime, FALLING);
     myRTC.begin();
     myRTC.squareWave(MCP79412RTC::SQWAVE_1_HZ);
+    hb.begin();
 
     time_t utc = getUTC();                  // synchronize with RTC
     while ( utc == getUTC() );              // wait for increment to the next second
     utc = myRTC.get();                      // get the time from the RTC
     setUTC(utc);                            // set our time to the RTC's time
     Serial << "Time set from RTC\n";
-
     timer.printSchedules();
 }
 void loop()
@@ -66,11 +69,13 @@ void loop()
         printDateTime(local, tcr->abbrev);
         timer.run(local);
     }
+    hb.run();
 }
 
 void timerCallback(bool state)
 {
-    digitalWrite(led1, state);
+    digitalWrite(ledIndicator, state);
+    digitalWrite(ssr, state);
 }
 
 // functions to manage the RTC time and the 1Hz interrupt.

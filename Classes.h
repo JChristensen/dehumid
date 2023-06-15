@@ -17,7 +17,8 @@ struct Sched
 
 // A timer that uses a fixed daily schedule, as defined by an array of
 // Sched objects (see above.)
-// The timer will call a callback function whenever a new schedule time takes effect.
+// The timer will call a callback function whenever a new schedule time
+// takes effect, and provide the callback with the current output value.
 // The run() method should ideally be called once per minute.
 class Timer
 {
@@ -81,4 +82,36 @@ void Timer::printSchedules()
     for (int i=0; i<m_nsched; i++) {
         Serial << (m_sched+i)->schedTime << ' ' << (m_sched+i)->schedState << endl;
     }    
+}
+
+// ---- Heartbeat LED class ----
+// Very simple, just a blinking LED.
+class HeartbeatLED
+{
+    public:
+        HeartbeatLED(uint8_t pin, uint32_t interval)
+            : m_pin{pin}, m_interval{interval} {}
+        void begin();
+        void run();
+
+    private:
+        uint8_t m_pin;
+        uint32_t m_interval;
+        uint32_t m_lastChange;
+        bool m_state{true};
+};
+
+void HeartbeatLED::begin()
+{
+    pinMode(m_pin, OUTPUT);
+    digitalWrite(m_pin, m_state);
+    m_lastChange = millis();
+}
+
+void HeartbeatLED::run()
+{
+    if (millis() - m_lastChange >= m_interval) {
+        m_lastChange += m_interval;
+        digitalWrite(m_pin, m_state = !m_state);
+    }
 }
