@@ -1,5 +1,6 @@
 // dehumidifier controller
 // uses an ssr to turn off power to the dehumidifier during peak rate period.
+// a manual override button can be used to change the output state.
 // J.Christensen 06Jun2023
 
 #include <JC_Button.h>      // https://github.com/JChristensen/JC_Button
@@ -14,9 +15,9 @@
 constexpr uint8_t
     rtcInterrupt {2},
     ledIndicator {6},       // indicator, same as ssr control output
-    ledHB {7},              // heartbeat led
-    btn1 {8},               // override/manual button (not yet implemented)
-    ssr {9};                // output to ssr control
+    ledHB        {7},       // heartbeat led
+    btn1         {8},       // override/manual button (not yet implemented)
+    ssr          {9};       // output to ssr control
 
 void timerCallback(bool state);
 
@@ -26,7 +27,7 @@ Timer timer(sched, sizeof(sched) / sizeof(sched[0]), timerCallback);
 
 // object instantiations
 MCP79412RTC myRTC;
-Button override(btn1);
+Button btnOverride(btn1);
 const uint32_t hbInterval(1000);
 HeartbeatLED hb(ledHB, hbInterval);
 
@@ -43,7 +44,7 @@ void setup()
     pinMode(rtcInterrupt, INPUT_PULLUP);
     pinMode(ledIndicator, OUTPUT);
     pinMode(ssr, OUTPUT);
-    override.begin();
+    btnOverride.begin();
     attachInterrupt(digitalPinToInterrupt(rtcInterrupt), incrementTime, FALLING);
     myRTC.begin();
     myRTC.squareWave(MCP79412RTC::SQWAVE_1_HZ);
@@ -69,7 +70,14 @@ void loop()
         printDateTime(local, tcr->abbrev);
         timer.run(local);
     }
-    hb.run();
+
+    // check for manual override
+    btnOverride.read();
+    if (btnOverride.wasReleased()) {
+        timer.toggle();
+    }
+
+    hb.run();   // run the heartbeat led
 }
 
 void timerCallback(bool state)

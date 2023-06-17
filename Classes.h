@@ -26,6 +26,7 @@ class Timer
         Timer(Sched* sched, int nsched, void (*fcn)(bool))
             : m_sched{sched}, m_nsched{nsched}, timerCallback{fcn} {}
         bool run(time_t t);
+        bool toggle();
         void printSchedules();
 
     private:
@@ -42,7 +43,7 @@ class Timer
 
 // check the current time against the timer schedules to determine
 // which schedule is in effect. call the callback function when a
-// new schedule takes effect.
+// new schedule takes effect. returns the current output state.
 bool Timer::run(time_t epoch)
 {
     int curSched;
@@ -72,6 +73,16 @@ bool Timer::run(time_t epoch)
         Serial << F("Sending callback: ") << m_state << endl;
         timerCallback(m_state);
     }
+    return m_state;
+}
+
+// override the current output state by toggling it.
+// calls the callback function and returns the new output state.
+bool Timer::toggle()
+{
+    m_state = !m_state;
+    timerCallback(m_state);
+    Serial << F("Override: ") << m_state << endl;
     return m_state;
 }
 
