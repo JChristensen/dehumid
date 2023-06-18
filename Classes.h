@@ -117,57 +117,35 @@ void Timer::printSchedules()
     }    
 }
 
-// Heartbeat LED with various blink modes
-class Heartbeat
+
+// ---- Heartbeat LED class ----
+// Very simple, just a blinking LED.
+class HeartbeatLED
 {
     public:
-        enum blinkMode_t {AUTO, MANUAL};
-        Heartbeat(uint8_t pin) : m_pin{pin} {}
-        void begin(blinkMode_t m);
+        HeartbeatLED(uint8_t pin, uint32_t interval=1000)
+            : m_pin{pin}, m_interval{interval} {}
+        void begin();
         void run();
-        void mode(blinkMode_t m);
 
     private:
         uint8_t m_pin;
-        uint32_t m_msOn;
-        uint32_t m_msOff;
         uint32_t m_interval;
-        bool m_state;
-        uint32_t m_msLastChange;
+        uint32_t m_lastChange;
+        bool m_state{true};
 };
 
-// hardware init
-void Heartbeat::begin(blinkMode_t m)
+void HeartbeatLED::begin()
 {
     pinMode(m_pin, OUTPUT);
-    m_state = false;
-    mode(m);
+    digitalWrite(m_pin, m_state);
+    m_lastChange = millis();
 }
 
-void Heartbeat::run()
+void HeartbeatLED::run()
 {
-    uint32_t ms = millis();
-    if ( ms - m_msLastChange >= m_interval ) {
-        m_msLastChange = ms;
+    if (millis() - m_lastChange >= m_interval) {
+        m_lastChange += m_interval;
         digitalWrite(m_pin, m_state = !m_state);
-        m_interval = m_state ? m_msOn : m_msOff;
     }
-}
-
-void Heartbeat::mode(blinkMode_t m)
-{
-    switch (m) {
-        case AUTO:
-            m_msOn  = 500;
-            m_msOff = 500;
-            break;
-
-        case MANUAL:
-            m_msOn  = 50;
-            m_msOff = 950;
-            break;
-    }
-    m_state = false;
-    m_msLastChange = 0;
-    run();
 }

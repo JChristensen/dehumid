@@ -1,13 +1,11 @@
-// Dehumidifier controller
-// Uses a solid-state relay to turn off power to the dehumidifier during peak rate period.
-// A manual override button can be used to change the output state.
-// There are two modes, automatic, where the schedules are in effect, and manual,
-// where the output state is only controlled by the button.
-// To change between modes, press the button and hold for one second. The indicator and
-// heartbeat LEDs will flash simultaneously to indicate the mode change.
+// AC Daily Timer
+// Controls a solid-state relay to turn a 120VAC appliance on/off according to a schedule.
+// An override button can be used to change the output state.
+// There are two modes, automatic, where the schedule is in effect, and manual,
+// where the output state is controlled only by the override button.
+// To change between modes, press the button and hold for one second.
 // When changing to manual mode, the output will be initially turned off. When changing
 // to automatic mode, the current schedule will determine the output state.
-// Manual mode is indicated by a short flash on the heartbeat LED.
 // J.Christensen 06Jun2023
 
 #include <JC_Button.h>      // https://github.com/JChristensen/JC_Button
@@ -21,22 +19,22 @@
 // pin definitions
 constexpr uint8_t
     rtcInterrupt {2},
-    ledIndicator {6},       // indicator, same as ssr control output
-    ledHB        {7},       // heartbeat led
-    btn1         {8},       // override/manual button (not yet implemented)
-    ssr          {9};       // output to ssr control
+    ssr          {5},       // output to ssr control
+    ledIndicator {6},       // timer output indicator, same as ssr control output
+    ledManual    {7},       // manual mode indicator
+    ledHB        {8},       // heartbeat led
+    btn1         {9};       // override/manual button (not yet implemented)
 
 void timerCallback(bool state);
 
 // schedules must be sorted earliest to latest, else undefined behavior!
-Sched sched[] {{1400, 0}, {1900, 1}};
+Sched sched[] {{1400, 0}, {1500, 1}, {1505, 0}, {1510, 1}, {1515, 0}, {1520, 1}, {1525, 0}, {1530, 1}};
 Timer timer(sched, sizeof(sched) / sizeof(sched[0]), timerCallback);
 
 // object instantiations
 MCP79412RTC myRTC;
 Button btnOverride(btn1);
-const uint32_t hbInterval(1000);
-Heartbeat hb(ledHB);
+HeartbeatLED hb(ledHB);
 
 // time zone
 TimeChangeRule EDT {"EDT", Second, Sun, Mar, 2, -240};  // Daylight time = UTC - 4 hours
@@ -49,13 +47,14 @@ void setup()
     Serial.begin(115200);
     Serial << F( "\n" __FILE__ "\nCompiled " __DATE__ " " __TIME__ "\n" );
     pinMode(rtcInterrupt, INPUT_PULLUP);
-    pinMode(ledIndicator, OUTPUT);
     pinMode(ssr, OUTPUT);
+    pinMode(ledIndicator, OUTPUT);
+    pinMode(ledManual, OUTPUT);
     btnOverride.begin();
     attachInterrupt(digitalPinToInterrupt(rtcInterrupt), incrementTime, FALLING);
     myRTC.begin();
     myRTC.squareWave(MCP79412RTC::SQWAVE_1_HZ);
-    hb.begin(Heartbeat::AUTO);
+    hb.begin();
 
     time_t utc = getUTC();                  // synchronize with RTC
     while ( utc == getUTC() );              // wait for increment to the next second
@@ -83,30 +82,18 @@ void loop()
     if (btnOverride.wasReleased()) {
         timer.toggle();
     }
+    // check for mode change
     else if (btnOverride.pressedFor(1000)) {
-        // flash both LEDs to give user feedback
-        digitalWrite(ledIndicator, HIGH);
-        digitalWrite(ledHB, HIGH);
-        delay(150);
-        digitalWrite(ledIndicator, LOW);
-        digitalWrite(ledHB, LOW);
-        delay(150);
-        digitalWrite(ledIndicator, HIGH);
-        digitalWrite(ledHB, HIGH);
+        // toggle manual/automatic mode and set the LED accordingly
+        digitalWrite(ledManual, timer.toggleMode());
         // wait for button to be released
         while (btnOverride.isPressed()) btnOverride.read();
-        // toggle the mode and set appropriate heartbeat
-        if (timer.toggleMode()) {
-            hb.mode(Heartbeat::MANUAL);
-        }
-        else {
-            hb.mode(Heartbeat::AUTO);
-            // apply the current schedule
-            time_t local = Eastern.toLocal(getUTC(), &tcr);
-            printDateTime(local, tcr->abbrev);
-            timer.run(local);
-        }
+        // apply the current schedule if auto mode
+        time_t local = Eastern.toLocal(getUTC(), &tcr);
+        printDateTime(local, tcr->abbrev);
+        timer.run(local);
     }
+
     hb.run();   // run the heartbeat led
 }
 
