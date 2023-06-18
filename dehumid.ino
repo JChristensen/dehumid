@@ -1,6 +1,13 @@
-// dehumidifier controller
-// uses an ssr to turn off power to the dehumidifier during peak rate period.
-// a manual override button can be used to change the output state.
+// Dehumidifier controller
+// Uses a solid-state relay to turn off power to the dehumidifier during peak rate period.
+// A manual override button can be used to change the output state.
+// There are two modes, automatic, where the schedules are in effect, and manual,
+// where the output state is only controlled by the button.
+// To change between modes, press the button and hold for one second. The indicator and
+// heartbeat LEDs will flash simultaneously to indicate the mode change.
+// When changing to manual mode, the output will be initially turned off. When changing
+// to automatic mode, the current schedule will determine the output state.
+// Manual mode is indicated by a short flash on the heartbeat LED.
 // J.Christensen 06Jun2023
 
 #include <JC_Button.h>      // https://github.com/JChristensen/JC_Button
@@ -29,7 +36,7 @@ Timer timer(sched, sizeof(sched) / sizeof(sched[0]), timerCallback);
 MCP79412RTC myRTC;
 Button btnOverride(btn1);
 const uint32_t hbInterval(1000);
-HeartbeatLED hb(ledHB, hbInterval);
+Heartbeat hb(ledHB);
 
 // time zone
 TimeChangeRule EDT {"EDT", Second, Sun, Mar, 2, -240};  // Daylight time = UTC - 4 hours
@@ -48,7 +55,7 @@ void setup()
     attachInterrupt(digitalPinToInterrupt(rtcInterrupt), incrementTime, FALLING);
     myRTC.begin();
     myRTC.squareWave(MCP79412RTC::SQWAVE_1_HZ);
-    hb.begin();
+    hb.begin(Heartbeat::AUTO);
 
     time_t utc = getUTC();                  // synchronize with RTC
     while ( utc == getUTC() );              // wait for increment to the next second
@@ -76,7 +83,30 @@ void loop()
     if (btnOverride.wasReleased()) {
         timer.toggle();
     }
-
+    else if (btnOverride.pressedFor(1000)) {
+        // flash both LEDs to give user feedback
+        digitalWrite(ledIndicator, HIGH);
+        digitalWrite(ledHB, HIGH);
+        delay(150);
+        digitalWrite(ledIndicator, LOW);
+        digitalWrite(ledHB, LOW);
+        delay(150);
+        digitalWrite(ledIndicator, HIGH);
+        digitalWrite(ledHB, HIGH);
+        // wait for button to be released
+        while (btnOverride.isPressed()) btnOverride.read();
+        // toggle the mode and set appropriate heartbeat
+        if (timer.toggleMode()) {
+            hb.mode(Heartbeat::MANUAL);
+        }
+        else {
+            hb.mode(Heartbeat::AUTO);
+            // apply the current schedule
+            time_t local = Eastern.toLocal(getUTC(), &tcr);
+            printDateTime(local, tcr->abbrev);
+            timer.run(local);
+        }
+    }
     hb.run();   // run the heartbeat led
 }
 

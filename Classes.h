@@ -27,6 +27,7 @@ class Timer
             : m_sched{sched}, m_nsched{nsched}, timerCallback{fcn} {}
         bool run(time_t t);
         bool toggle();
+        bool toggleMode();
         void printSchedules();
 
     private:
@@ -36,6 +37,7 @@ class Timer
                                         // initial value of -1 ensures the callback is made
                                         // on the first call to run()
         bool m_state;                   // the current state
+        bool m_manualMode {false};      // manual mode ignores the schedules, only the button controls the output
         void (*timerCallback)(bool);    // the caller's callback function
         // convert a time_t value to an integer of the form hhmm for easy comparisons
         int convertTime(time_t t) {return hour(t)*100 + minute(t);}
@@ -66,8 +68,9 @@ bool Timer::run(time_t epoch)
     }
     Serial << F(" Current schedule ") << (m_sched+curSched)->schedTime << ' ' << (m_sched+curSched)->schedState << endl;
 
-    // do the callback only if the active schedule has changed since the last call to check().
-    if (curSched != m_curSched) {
+    // do the callback only if the active schedule has changed since
+    // the last call to check(), and manual mode is not in effect.
+    if ((curSched != m_curSched) && !m_manualMode) {
         m_curSched = curSched;
         m_state = (m_sched+m_curSched)->schedState;
         Serial << F("Sending callback: ") << m_state << endl;
@@ -86,6 +89,25 @@ bool Timer::toggle()
     return m_state;
 }
 
+// change from manual mode to automatic mode or vice versa.
+// when switching to manual mode, turns the output off.
+// when switching to automatic mode, applies the current schedule.
+// returns the current mode.
+bool Timer::toggleMode()
+{
+    m_manualMode = !m_manualMode;
+    if (m_manualMode) {
+        m_state = false;
+        timerCallback(m_state);
+        Serial << F("Manual mode\n");
+    }
+    else {
+        m_curSched = -1;    // force run() to call the callback
+        Serial << F("Auto mode\n");
+    }
+    return m_manualMode;
+}
+
 // print the schedules.
 void Timer::printSchedules()
 {
@@ -95,34 +117,57 @@ void Timer::printSchedules()
     }    
 }
 
-// ---- Heartbeat LED class ----
-// Very simple, just a blinking LED.
-class HeartbeatLED
+// Heartbeat LED with various blink modes
+class Heartbeat
 {
     public:
-        HeartbeatLED(uint8_t pin, uint32_t interval)
-            : m_pin{pin}, m_interval{interval} {}
-        void begin();
+        enum blinkMode_t {AUTO, MANUAL};
+        Heartbeat(uint8_t pin) : m_pin{pin} {}
+        void begin(blinkMode_t m);
         void run();
+        void mode(blinkMode_t m);
 
     private:
         uint8_t m_pin;
+        uint32_t m_msOn;
+        uint32_t m_msOff;
         uint32_t m_interval;
-        uint32_t m_lastChange;
-        bool m_state{true};
+        bool m_state;
+        uint32_t m_msLastChange;
 };
 
-void HeartbeatLED::begin()
+// hardware init
+void Heartbeat::begin(blinkMode_t m)
 {
     pinMode(m_pin, OUTPUT);
-    digitalWrite(m_pin, m_state);
-    m_lastChange = millis();
+    m_state = false;
+    mode(m);
 }
 
-void HeartbeatLED::run()
+void Heartbeat::run()
 {
-    if (millis() - m_lastChange >= m_interval) {
-        m_lastChange += m_interval;
+    uint32_t ms = millis();
+    if ( ms - m_msLastChange >= m_interval ) {
+        m_msLastChange = ms;
         digitalWrite(m_pin, m_state = !m_state);
+        m_interval = m_state ? m_msOn : m_msOff;
     }
+}
+
+void Heartbeat::mode(blinkMode_t m)
+{
+    switch (m) {
+        case AUTO:
+            m_msOn  = 500;
+            m_msOff = 500;
+            break;
+
+        case MANUAL:
+            m_msOn  = 50;
+            m_msOff = 950;
+            break;
+    }
+    m_state = false;
+    m_msLastChange = 0;
+    run();
 }
