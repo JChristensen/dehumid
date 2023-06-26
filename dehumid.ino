@@ -1,15 +1,24 @@
 // AC Daily Timer
-// Controls a solid-state relay to turn a 120VAC appliance on/off according to a schedule.
+// Sketch to control a 120VAC appliance via a solid-state relay, according to a daily schedule.
 // An override button can be used to change the output state.
 // There are two modes, automatic, where the schedule is in effect, and manual,
 // where the output state is controlled only by the override button.
 // To change between modes, press the button and hold for one second.
 // When changing to manual mode, the output will be initially turned off. When changing
 // to automatic mode, the current schedule will determine the output state.
+// For time keeping, an MCP7941x RTC is used. The RTC can be calibrated automatically
+// during setup from a value stored in its EEPROM. A calibration value is assumed to
+// be present at address 0x7F if addresses 0x7D and 0x7E contain 0xAA and 0x55 respectively.
+// An MCP9802 temperature sensor can optionally be present on the I2C bus. The code will
+// automatically detect whether it is installed, and, if so, will report temperature.
+// 
 // J.Christensen 06Jun2023
+// Thanks to Tom Hagen for design input and for testing.
 
 #include <JC_Button.h>      // https://github.com/JChristensen/JC_Button
 #include <MCP79412RTC.h>    // https://github.com/JChristensen/MCP79412RTC
+#include <MCP9800.h>        // https://github.com/JChristensen/MCP9800
+#include <movingAvg.h>      // https://github.com/JChristensen/movingAvg
 #include <Streaming.h>      // https://github.com/janelia-arduino/Streaming
 #include <TimeLib.h>        // https://github.com/PaulStoffregen/Time
 #include <Timezone.h>       // https://github.com/JChristensen/Timezone
@@ -19,28 +28,34 @@
 // pin definitions
 constexpr uint8_t
     rtcInterrupt {2},
-    ssr          {5},       // output to ssr control
-    ledIndicator {6},       // timer output indicator, same as ssr control output
-    ledManual    {7},       // manual mode indicator
-    ledHB        {8},       // heartbeat led
-    btn1         {9};       // override/manual button (not yet implemented)
+    ledIndicator {3},       // timer output indicator, same as ssr control output
+    ledManual    {4},       // manual mode indicator
+    ledHB        {13},      // heartbeat led
+    btn1         {A2},      // override/manual button (not yet implemented)
+    ssr          {A3};      // output to ssr control
 
-void timerCallback(bool state);
+constexpr uint8_t unusedPins[] {5, 6, 7, 8, 9, 10, 11, 12, A0, A1}; // 0 and 1 used for serial rx/tx
 
 // schedules must be sorted earliest to latest, else undefined behavior!
-Sched sched[] {{1400, 0}, {1500, 1}, {1505, 0}, {1510, 1}, {1515, 0}, {1520, 1}, {1525, 0}, {1530, 1}};
-Timer timer(sched, sizeof(sched) / sizeof(sched[0]), timerCallback);
+Sched sched[] {{1400, 0}, {1900, 1}};
 
 // object instantiations
+void timerCallback(bool state);     // function prototype
+Timer timer(sched, sizeof(sched) / sizeof(sched[0]), timerCallback);
 MCP79412RTC myRTC;
 Button btnOverride(btn1);
 HeartbeatLED hb(ledHB);
+MCP9800 tempSensor(0);
+movingAvg avgTemp(6);
 
 // time zone
 TimeChangeRule EDT {"EDT", Second, Sun, Mar, 2, -240};  // Daylight time = UTC - 4 hours
 TimeChangeRule EST {"EST", First,  Sun, Nov, 2, -300};  // Standard time = UTC - 5 hours
 Timezone Eastern(EDT, EST);
 TimeChangeRule *tcr;        // pointer to the time change rule, use to get TZ abbrev
+
+// global variables
+bool hasTempSensor;
     
 void setup()
 {
@@ -50,11 +65,37 @@ void setup()
     pinMode(ssr, OUTPUT);
     pinMode(ledIndicator, OUTPUT);
     pinMode(ledManual, OUTPUT);
-    btnOverride.begin();
+
+    // enable pullups on unused pins for noise immunity
+    for (uint8_t i=0; i<sizeof(unusedPins)/sizeof(unusedPins[0]); i++) {
+        pinMode(unusedPins[i], INPUT_PULLUP);
+    }
+    
     attachInterrupt(digitalPinToInterrupt(rtcInterrupt), incrementTime, FALLING);
     myRTC.begin();
     myRTC.squareWave(MCP79412RTC::SQWAVE_1_HZ);
+    btnOverride.begin();
+    avgTemp.begin();
     hb.begin();
+
+    // check for temperature sensor
+    Wire.beginTransmission(MCP9800_BASE_ADDR);
+    hasTempSensor = (Wire.endTransmission() == 0);
+    if (hasTempSensor) {   // take an initial reading
+        avgTemp.reading( tempSensor.readTempF10(AMBIENT) );
+        Serial << F("Temperature sensor found\n");
+    }
+    else {
+        Serial << F("Temperature sensor not found\n");
+    }
+
+    // check for rtc eeprom signature indicating calibration value present
+    if (myRTC.eepromRead(125) == 0xAA && myRTC.eepromRead(126) == 0x55) {
+        // get the calibration value
+        int8_t calibValue = static_cast<int8_t>(myRTC.eepromRead(127));
+        myRTC.calibWrite(calibValue);   // set calibration register
+        Serial << F("RTC calibrated from EEPROM: ") << calibValue << endl;
+    }
 
     time_t utc = getUTC();                  // synchronize with RTC
     while ( utc == getUTC() );              // wait for increment to the next second
@@ -65,15 +106,28 @@ void setup()
 }
 void loop()
 {
-    static int minLast {99};
     time_t t = getUTC();
-    int minNow = minute(t);
+    time_t local = Eastern.toLocal(t, &tcr);
+
+    // if temperature sensor present, read every 10 seconds.
+    if (hasTempSensor) {
+        static int secLast {99};
+        int secNow = second(t);
+        if (secNow != secLast) {
+            secLast = secNow;
+            if (secNow % 10 == 0) {
+                avgTemp.reading( tempSensor.readTempF10(AMBIENT) );
+            }
+        }
+    }
 
     // check the timer once per minute
+    static int minLast {99};
+    int minNow = minute(t);
     if (minNow != minLast) {
         minLast = minNow;
-        time_t local = Eastern.toLocal(t, &tcr);
         printDateTime(local, tcr->abbrev);
+        printTemperature();
         timer.run(local);
     }
 
@@ -89,8 +143,8 @@ void loop()
         // wait for button to be released
         while (btnOverride.isPressed()) btnOverride.read();
         // apply the current schedule if auto mode
-        time_t local = Eastern.toLocal(getUTC(), &tcr);
         printDateTime(local, tcr->abbrev);
+        printTemperature();
         timer.run(local);
     }
 
@@ -133,9 +187,15 @@ void incrementTime()
 void printDateTime(time_t t, const char *tz)
 {
     char buf[32];
-    char m[4];    // temporary storage for month string (DateStrings.cpp uses shared buffer)
-    strcpy(m, monthShortStr(month(t)));
-    sprintf(buf, "%.2d:%.2d:%.2d %s %.2d %s %d %s",
-        hour(t), minute(t), second(t), dayShortStr(weekday(t)), day(t), m, year(t), tz);
+    sprintf(buf, "%.2d:%.2d:%.2d %.4d-%.2d-%.2d %s",
+        hour(t), minute(t), second(t), year(t), month(t), day(t), tz);
     Serial.print(buf);
+}
+
+// print the temperature if sensor present
+void printTemperature()
+{
+    if (hasTempSensor) {
+        Serial << ' ' << _FLOAT(avgTemp.getAvg() / 10.0, 1) << F("°F");
+    }
 }

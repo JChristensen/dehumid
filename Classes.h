@@ -4,7 +4,7 @@
 // The timer class wants a pointer to an array of Sched objects which define
 // daily on and off times.
 // The array of Sched objects must be in ascending order by time, else
-// undefined behavior will result.
+// undefined behavior will result. (I may write a sort later, but for now I am lazy.)
 // schedTime is an integer of the form hhmm where hh is 0-23 and mm is 0-59.
 // No error checking is done. Invalid values of time will result in undefined behavior.
 // schedState defines the timer output at the corresponding time,
