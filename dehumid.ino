@@ -126,8 +126,7 @@ void loop()
     int minNow = minute(t);
     if (minNow != minLast) {
         minLast = minNow;
-        printDateTime(local, tcr->abbrev);
-        printTemperature();
+        printDateTime(local, tcr->abbrev, hasTempSensor);
         timer.run(local);
     }
 
@@ -143,8 +142,7 @@ void loop()
         // wait for button to be released
         while (btnOverride.isPressed()) btnOverride.read();
         // apply the current schedule if auto mode
-        printDateTime(local, tcr->abbrev);
-        printTemperature();
+        printDateTime(local, tcr->abbrev, hasTempSensor);
         timer.run(local);
     }
 
@@ -184,17 +182,12 @@ void incrementTime()
 }
 
 // format and print a time_t value, with a time zone appended.
-void printDateTime(time_t t, const char *tz)
+void printDateTime(time_t t, const char *tz, bool hasTempSensor)
 {
     char buf[32];
     sprintf(buf, "%.2d:%.2d:%.2d %.4d-%.2d-%.2d %s",
         hour(t), minute(t), second(t), year(t), month(t), day(t), tz);
     Serial.print(buf);
-}
-
-// print the temperature if sensor present
-void printTemperature()
-{
     if (hasTempSensor) {
         Serial << ' ' << _FLOAT(avgTemp.getAvg() / 10.0, 1) << F("°F");
     }
