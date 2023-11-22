@@ -111,10 +111,10 @@ bool Timer::toggleMode()
 // print the schedules.
 void Timer::printSchedules()
 {
-    Serial << "There are " << m_nsched << " schedules\n";
+    Serial << "There are " << m_nsched << " schedules:\n";
     for (int i=0; i<m_nsched; i++) {
         Serial << (m_sched+i)->schedTime << ' ' << (m_sched+i)->schedState << endl;
-    }    
+    }
 }
 
 

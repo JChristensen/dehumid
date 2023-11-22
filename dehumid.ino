@@ -11,7 +11,7 @@
 // be present at address 0x7F if addresses 0x7D and 0x7E contain 0xAA and 0x55 respectively.
 // An MCP9802 temperature sensor can optionally be present on the I2C bus. The code will
 // automatically detect whether it is installed, and, if so, will report temperature.
-// 
+//
 // J.Christensen 06Jun2023
 // Thanks to Tom Hagen for design input and for testing.
 
@@ -56,7 +56,7 @@ TimeChangeRule *tcr;        // pointer to the time change rule, use to get TZ ab
 
 // global variables
 bool hasTempSensor;
-    
+
 void setup()
 {
     Serial.begin(115200);
@@ -70,7 +70,7 @@ void setup()
     for (uint8_t i=0; i<sizeof(unusedPins)/sizeof(unusedPins[0]); i++) {
         pinMode(unusedPins[i], INPUT_PULLUP);
     }
-    
+
     attachInterrupt(digitalPinToInterrupt(rtcInterrupt), incrementTime, FALLING);
     myRTC.begin();
     myRTC.squareWave(MCP79412RTC::SQWAVE_1_HZ);
@@ -88,6 +88,16 @@ void setup()
     else {
         Serial << F("Temperature sensor not found\n");
     }
+
+    // print rtc id
+    uint8_t rtcID[8];
+    myRTC.idRead(rtcID);
+    Serial << F("RTC ID: ");
+    for (int i=0; i<8; ++i) {
+        if (rtcID[i] < 16) Serial << '0';
+        Serial << _HEX(rtcID[i]);
+    }
+    Serial << endl;
 
     // check for rtc eeprom signature indicating calibration value present
     if (myRTC.eepromRead(125) == 0xAA && myRTC.eepromRead(126) == 0x55) {
@@ -146,6 +156,9 @@ void loop()
         timer.run(local);
     }
 
+    // check for input, to set rtc time or calibration
+    if (Serial.available()) setRTC();
+
     hb.run();   // run the heartbeat led
 }
 
@@ -191,4 +204,87 @@ void printDateTime(time_t t, const char *tz, bool hasTempSensor)
     if (hasTempSensor) {
         Serial << ' ' << _FLOAT(avgTemp.getAvg() / 10.0, 1) << F("°F");
     }
+}
+
+void setRTC()
+{
+    // first character is a command, "S" to set date/time, or "C" to set the calibration register
+    int cmdChar = Serial.read();
+
+    switch (cmdChar) {
+        case 'S':
+        case 's':
+            delay(25);  // wait for all the input to arrive
+            // check for input to set the RTC, minimum length is 13, i.e. yy,m,d,h,m,s<nl>
+            if (Serial.available() < 13) {
+                while (Serial.available()) Serial.read();  // dump extraneous input
+                Serial << F("Input error or timeout, try again.\n");
+            }
+            else {
+                // note that the tmElements_t Year member is an offset from 1970,
+                // but the RTC wants the last two digits of the calendar year.
+                // use the convenience macros from TimeLib.h to do the conversions.
+                int y = Serial.parseInt();
+                if (y >= 100 && y < 1000)
+                    Serial << F("Error: Year must be two digits or four digits!\n");
+                else {
+                    tmElements_t tm;
+                    if (y >= 1000)
+                        tm.Year = CalendarYrToTm(y);
+                    else    //(y < 100)
+                        tm.Year = y2kYearToTm(y);
+                    tm.Month = Serial.parseInt();
+                    tm.Day = Serial.parseInt();
+                    tm.Hour = Serial.parseInt();
+                    tm.Minute = Serial.parseInt();
+                    tm.Second = Serial.parseInt();
+                    if (tm.Month == 0 || tm.Day == 0) {
+                        while (Serial.available()) Serial.read();  // dump extraneous input
+                        Serial << F("Input error or timeout, try again.\n");
+                    }
+                    else {
+                        time_t t = makeTime(tm);
+                        myRTC.set(t);               // use the time_t value to ensure correct weekday is set
+                        time_t utc = myRTC.get();   // get the time from the RTC
+                        setUTC(utc);                // set our time to the RTC's time
+                        Serial << F("RTC set to UTC: ");
+                        printTime(t);
+                    }
+                }
+            }
+            break;
+
+        case 'C':
+        case 'c':
+            delay(25);  // wait for all the input to arrive
+            if (Serial.available() < 2) {   // minimum valid input at this point is 2 chars
+                while (Serial.available()) Serial.read();  // dump extraneous input
+                Serial << F("Input error or timeout, try again.\n");
+            }
+            else {
+                int newCal = Serial.parseInt();
+                int oldCal = myRTC.calibRead();
+                myRTC.calibWrite(newCal);
+                Serial << F("Calibration changed from ") << oldCal << F(" to ") << myRTC.calibRead() << endl;
+            }
+            break;
+
+        default:
+            Serial << endl << F("Unrecognized command: ") << (char)cmdChar << endl;
+            break;
+    }
+
+    // dump any extraneous input
+    while (Serial.available()) Serial.read();
+}
+
+// format and print a time_t value
+void printTime(const time_t t)
+{
+    char buf[25];
+    char m[4];    // temporary storage for month string (DateStrings.cpp uses shared buffer)
+    strcpy(m, monthShortStr(month(t)));
+    sprintf(buf, "%.2d:%.2d:%.2d %s %.2d %s %d",
+        hour(t), minute(t), second(t), dayShortStr(weekday(t)), day(t), m, year(t));
+    Serial.println(buf);
 }
