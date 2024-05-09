@@ -1,19 +1,7 @@
-// AC Daily Timer
-// Sketch to control a 120VAC appliance via a solid-state relay, according to a daily schedule.
-// An override button can be used to change the output state.
-// There are two modes, automatic, where the schedule is in effect, and manual,
-// where the output state is controlled only by the override button.
-// To change between modes, press the button and hold for one second.
-// When changing to manual mode, the output will be initially turned off. When changing
-// to automatic mode, the current schedule will determine the output state.
-// For time keeping, an MCP7941x RTC is used. The RTC can be calibrated automatically
-// during setup from a value stored in its EEPROM. A calibration value is assumed to
-// be present at address 0x7F if addresses 0x7D and 0x7E contain 0xAA and 0x55 respectively.
-// An MCP9802 temperature sensor can optionally be present on the I2C bus. The code will
-// automatically detect whether it is installed, and, if so, will report temperature.
-//
-// J.Christensen 06Jun2023
-// Thanks to Tom Hagen for design input and for testing.
+// AC Timer sketch
+// https://github.com/JChristensen/dehumid
+// Copyright (C) 2023-2024 by Jack Christensen and licensed under
+// GNU GPL v3.0, https://www.gnu.org/licenses/gpl.html
 
 #include <JC_Button.h>      // https://github.com/JChristensen/JC_Button
 #include <MCP79412RTC.h>    // https://github.com/JChristensen/MCP79412RTC
@@ -60,6 +48,7 @@ bool hasTempSensor;
 void setup()
 {
     Serial.begin(115200);
+    Serial << F("\nhttps://github.com/JChristensen/dehumid");
     Serial << F( "\n" __FILE__ "\nCompiled " __DATE__ " " __TIME__ "\n" );
     pinMode(rtcInterrupt, INPUT_PULLUP);
     pinMode(ssr, OUTPUT);
@@ -71,8 +60,15 @@ void setup()
         pinMode(unusedPins[i], INPUT_PULLUP);
     }
 
-    attachInterrupt(digitalPinToInterrupt(rtcInterrupt), incrementTime, FALLING);
+    // start the rtc if it's not running. this enables the square wave
+    // output used for timekeeping interrupts.
     myRTC.begin();
+    if (!myRTC.isRunning()) {
+        Serial << F("RTC is not running, starting it now. Time will be incorrect!\n");
+        myRTC.set(myRTC.get());
+    }
+
+    attachInterrupt(digitalPinToInterrupt(rtcInterrupt), incrementTime, FALLING);
     myRTC.squareWave(MCP79412RTC::SQWAVE_1_HZ);
     btnOverride.begin();
     avgTemp.begin();

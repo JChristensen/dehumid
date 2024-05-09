@@ -1,3 +1,8 @@
+// AC Timer sketch
+// https://github.com/JChristensen/dehumid
+// Copyright (C) 2023-2024 by Jack Christensen and licensed under
+// GNU GPL v3.0, https://www.gnu.org/licenses/gpl.html
+
 #include <TimeLib.h>        // https://github.com/PaulStoffregen/Time
 
 // Sched object used by the Timer class.
